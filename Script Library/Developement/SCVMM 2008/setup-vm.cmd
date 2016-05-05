@@ -1,0 +1,1 @@
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noexit '\\vbvs0001\vmm library\script library\developement\scvmm 2008\setup-vm.ps1'

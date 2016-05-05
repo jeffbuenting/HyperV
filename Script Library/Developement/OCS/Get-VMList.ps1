@@ -1,0 +1,1 @@
+﻿get-vm -vmmserver vmas9072 |sort name | ConvertTo-Html name,hostname,Memory,OperatingSystem, Owner -Title "Virtual Machine Information" | Set-Content "\\vbws006\d$\program files\microsoft virtual server\website\vminfo.htm"
