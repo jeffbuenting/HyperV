@@ -8,13 +8,17 @@
 
 [CmdletBinding()]
 Param(
-    [String]$Name = 'JB-SQL02',
+    [String]$HVHost = 'SL-JeffB',
 
-    [String]$Path = 'h:\VirtualMachines',
+    [String]$Name = 'JB-CRM03',
+
+    [String]$Path = 'h:\virtualmachines',
 
     [Int64]$MemoryStartUpBytes = 2GB,
 
-    [Int64]$MinimumRAM = 2GB,
+    [Int64]$MinimumRAM = .5GB,
+
+    [Int64]$ProcessorCount = 4,
 
     [String]$Switch = 'External',
 
@@ -22,7 +26,9 @@ Param(
 
     [String]$UnattendFile = 'G:\Template\Win2016\autounattend.xml',
 
-    [String]$UnattendISO = "WIN2016STD_Unattended.iso"
+    [String]$UnattendISO = "WIN2016STD_Unattended.iso",
+
+    [String]$Key = '89YHN-XPT6M-2THWJ-9FB79-T84BC'
 )
 
 $VerbosePreference = 'Continue'
@@ -35,7 +41,7 @@ $VerbosePreference = 'Continue'
 
 # ----- Delete VM  probably don't want to do this automatically
 
-$OldVM = Get-VM -name $Name -ErrorAction SilentlyContinue
+#$OldVM = Get-VM -ComputerName $HVHost -name $Name -ErrorAction SilentlyContinue
 
 if ( $OldVM ) {
     if ( (Read-Host "$Name VM already exists.  Do you want to delete it? (y/N)").ToLower() -eq 'y' ) {
@@ -48,7 +54,12 @@ if ( $OldVM ) {
 
         Remove-VM -VM $OldVM -Force
 
-        Remove-Item $OldVM.Path -Recurse -Force
+        IF ( $HVHost -ne $env:COMPUTERNAME ) {
+            Remove-Item "\\$HVHost\$($OldVM.Path.Replace(':','$'))" -Recurse -Force
+        }
+        Else {
+            Remove-Item $OldVM.Path -Recurse -Force
+        }
     }
     else {
         Write-Warning "You do not want to delet the existing VM: $Name"
@@ -68,11 +79,12 @@ Copy-item $UnattendFile -Destination $OSTemplate\iso\AutoUnattend.xml  -Force
 Write-verbose "Edit Computer Name in Unattend.xml"
 $XML = [xml](Get-Content "$OSTemplate\iso\AutoUnattend.xml" )
 (($xml.unattend.settings | where pass -eq specialize).component | where name -eq "Microsoft-Windows-Shell-Setup").ComputerName = $Name
+(($xml.unattend.settings | where pass -eq specialize).component | where name -eq "Microsoft-Windows-Shell-Setup").ProductKey = $Key
 $XML.Save( "$OSTemplate\iso\AutoUnattend.xml" )
 
 # ----- Create new ISO
 write-Verbose "Create new ISO with Unattended.xml"
-Set-Location ($Path -split '\\')[0]
+#Set-Location ($Path -split '\\')[0]
 
 Try {
     if ( Test-Path -Path "$OSTemplate\$UnattendISO" ) { Remove-Item -Path "$OSTemplate\$UnattendISO" -ErrorAction Stop  }
@@ -86,34 +98,53 @@ Catch {
     Throw "ERROR : Problem creating Unattend ISO.`n`n     $ExceptionMessage`n`n     Exception : $ExceptionType" 
 }
 
+# ----- copy to remote server if needed
 
-# ----- Create New VM 
-Try {
-    Write-Verbose "Creating VM"
-    $VM = New-VM -Name $Name  -MemoryStartupBytes $MemoryStartUpBytes -Path $Path -NewVHDPath "$Name.vhdx" -NewVHDSizeBytes 128849018880  -SwitchName $Switch -ErrorAction Stop
-} 
-Catch {
-    $EXceptionMessage = $_.Exception.Message
-    $ExceptionType = $_.exception.GetType().fullname
-    Throw "ERROR : There was a problem creating the new VM.`n`n     $ExceptionMessage`n`n     Exception : $ExceptionType"   
+IF ( $HVHost -ne $env:COMPUTERNAME ) {
+    Copy-item -Path "$OSTemplate\$UnattendISO" -Destination "\\$HVHost\C$\temp\" -force
+    $OSTemplate = "c:\temp"   
 }
 
-# ----- Configure VM
-Set-VM -VM $VM -DynamicMemory -ProcessorCount 6 -MemoryMinimumBytes $MinimumRam
- 
-# ----- Mount ISO
-Set-VMDvdDrive -VMName $VM.Name -Path "$OSTemplate\$UnattendISO"
+ invoke-command -ComputerName $HVHost -scriptblock {
+    $VerbosePreference = 'Continue'
 
-Write-Verbose "Starting VM $Name"
-Start-VM -VM $VM 
+    # ----- Create New VM 
+    Try {
+        Write-Verbose "Creating VM"
+        $VM =New-VM -ComputerName $Using:HVHost -Name $Using:Name  -MemoryStartupBytes $Using:MemoryStartUpBytes -Path $Using:Path -NewVHDPath "$($Using:Name).vhdx" -NewVHDSizeBytes 128849018880  -SwitchName $Using:Switch -ErrorAction Stop
+    } 
+    Catch {
+        $EXceptionMessage = $_.Exception.Message
+        $ExceptionType = $_.exception.GetType().fullname
+        Throw "ERROR : There was a problem creating the new VM.`n`n     $ExceptionMessage`n`n     Exception : $ExceptionType"   
+    }
+
+
+    # ----- Configure VM
+    Set-VM -VM $VM -DynamicMemory -ProcessorCount $Using:ProcessorCount -MemoryMinimumBytes $Using:MinimumRam
+ 
+    # ----- Mount ISO
+
+    
+
+    Set-VMDvdDrive -ComputerName $Using:HVHost -VMName $VM.Name -Path "$Using:OSTemplate\$Using:UnattendISO"
+
+
+    Write-Verbose "Starting VM $Using:Name"
+    Start-VM -VM $VM 
+
+
+
+
+}
 
 # ----- Because our DNS is configured wonky, we have to use the FQDN for DNS resolution.
-$Name = $Name + '.stratuslivedemo.com'
+$FQDNName = $Name + '.stratuslivedemo.com'
 
 # ----- wait for OS to be installed and configured via unattend.xml
 $Timeout = 120
 $T = 0
-while ( -Not (Test-Connection -ComputerName $Name -Count 1 -Quiet) ) {
+while ( -Not (Test-Connection -ComputerName $FQDNName -Count 1 -Quiet) ) {
     Write-Output "Configuring ...($T)"
     $T ++
     if ( $T -ge $Timeout ) { Throw "Error : Timeout Reached waiting for Server to Retart.`n`nTo verify the server is back up relies on pinging the system.  If the firewall does not allow ping then this process will fail and timeout." }
@@ -122,35 +153,40 @@ while ( -Not (Test-Connection -ComputerName $Name -Count 1 -Quiet) ) {
 
 # ----- Reboot Server to Complete AutoUnattend
 Write-Verbose "Rebooting Computer"
-Restart-Computer -ComputerName $Name -Wait -For PowerShell -Force
+Restart-Computer -ComputerName $FQDNName -Wait -For PowerShell -Force
 
 # ----- Having problems creating temp dir on remote machine.  Pausing to make sure everything is online
-#$Pause = 180
-#For ( $I = 1; $I -le 100; $I++ ) {
+$Pause = 180
+For ( $I = 1; $I -le 100; $I++ ) {
 
-#    Write-Progress -Activity 'Waiting for VM' -PercentComplete $I -CurrentOperation "$I Complete" -status 'Please wait'
-#    Start-Sleep -Seconds ([int]($Pause/100))
-#}
+    Write-Progress -Activity 'Waiting for VM' -PercentComplete $I -CurrentOperation "$I Complete" -status 'Please wait'
+    Start-Sleep -Seconds ([int]($Pause/100))
+}
+
+
 
 # ----- add the DSC Cert 
 # ----- https://msdn.microsoft.com/en-us/powershell/dsc/securemof
-Write-Verbose "Importing DSC Certificate"
+#Write-Verbose "Importing DSC Certificate"
 
 
-if ( -Not (Test-Path "\\$Name\c$\Temp") ) { New-item -Path "\\$Name\c$\Temp" -ItemType Directory }
+#if ( -Not (Test-Path "\\$Name\c$\Temp") ) { New-item -Path "\\$Name\c$\Temp" -ItemType Directory }
 
-Copy-Item -Path "\\sl-dsc.stratuslivedemo.com\c$\DSCScripts\DscPrivateKey.pfx" -Destination "\\$Name\c$\Temp" -Force
+#Copy-Item -Path "\\sl-dsc.stratuslivedemo.com\c$\DSCScripts\DscPrivateKey.pfx" -Destination "\\$Name\c$\Temp" -Force
 
-Invoke-Command -ComputerName $Name -ScriptBlock {
-    $mypwd = ConvertTo-SecureString -String "Stratus!!2017" -Force -AsPlainText
-    Import-PfxCertificate -FilePath "C:\temp\DscPrivateKey.pfx" -CertStoreLocation Cert:\LocalMachine\My -Password $mypwd
-}
+#Invoke-Command -ComputerName $Name -ScriptBlock {
+#    $mypwd = ConvertTo-SecureString -String "Stratus!!2017" -Force -AsPlainText
+#    Import-PfxCertificate -FilePath "C:\temp\DscPrivateKey.pfx" -CertStoreLocation Cert:\LocalMachine\My -Password $mypwd
+#}
 
 # ----- For my lab I shut off the windows firewall
-Write-Verbose "Making sure firewall is off for LAB."
-$Session = New-CimSession -ComputerName $Name 
-Get-NetFirewallprofile -CimSession $Session | Set-NetFirewallProfile -Enabled False
+#Write-Verbose "Making sure firewall is off for LAB."
+#$Session = New-CimSession -ComputerName $Name 
+#Get-NetFirewallprofile -CimSession $Session | Set-NetFirewallProfile -Enabled False
 
 # ----- Cleanup
 Write-verbose "Removing ISO from VM drive"
-Set-VMDvdDrive -VMName $VM.Name -Path $Null
+invoke-Command -ComputerName $HVHost -ScriptBlock {
+    
+    Set-VMDvdDrive -ComputerName $Using:HVHost -VMName $Using:Name -Path $Null
+}
