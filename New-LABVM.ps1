@@ -139,7 +139,7 @@ IF ( $HVHost -ne $env:COMPUTERNAME ) {
 }
 
 # ----- Because our DNS is configured wonky, we have to use the FQDN for DNS resolution.
-$FQDNName = $Name + '.stratuslivedemo.com'
+$FQDNName = $Name + '
 
 # ----- wait for OS to be installed and configured via unattend.xml
 $Timeout = 120
@@ -172,10 +172,10 @@ For ( $I = 1; $I -le 100; $I++ ) {
 
 #if ( -Not (Test-Path "\\$Name\c$\Temp") ) { New-item -Path "\\$Name\c$\Temp" -ItemType Directory }
 
-#Copy-Item -Path "\\sl-dsc.stratuslivedemo.com\c$\DSCScripts\DscPrivateKey.pfx" -Destination "\\$Name\c$\Temp" -Force
+#Copy-Item -Path "xxx\c$\DSCScripts\DscPrivateKey.pfx" -Destination "\\$Name\c$\Temp" -Force
 
 #Invoke-Command -ComputerName $Name -ScriptBlock {
-#    $mypwd = ConvertTo-SecureString -String "Stratus!!2017" -Force -AsPlainText
+#    $mypwd = ConvertTo-SecureString -String "xxx" -Force -AsPlainText
 #    Import-PfxCertificate -FilePath "C:\temp\DscPrivateKey.pfx" -CertStoreLocation Cert:\LocalMachine\My -Password $mypwd
 #}
 
